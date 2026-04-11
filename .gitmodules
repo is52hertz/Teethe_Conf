@@ -1,0 +1,3 @@
+[submodule "Sr_Conf"]
+	path = Sr_Conf
+	url = https://github.com/Johnshall/Shadowrocket-ADBlock-Rules-Forever.git
