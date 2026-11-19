@@ -21,7 +21,16 @@ else
   kind=${input%%,*}
   rule="${kind:u},${input#*,}"
 fi
+# 显式保留 *.example.org 只匹配子域名的范围。
+if [[ $rule == DOMAIN-SUFFIX,\*.* ]]; then
+  rule="DOMAIN-WILDCARD,${rule#*,}"
+fi
 selector="${rule%%,*},${${rule#*,}%%,*}"
+fields=("${(@s:,:)rule}")
+case ${fields[1]} in
+  AND|OR|NOT) heading='## - 自定义逻辑规则 - ##' ;;
+  *) heading="## - 自定义分流 · ${fields[3]} - ##" ;;
+esac
 
 configs=(sr_cnip_ex.conf sr_cnip_ad_ex.conf)
 [[ $(git branch --show-current) == main ]] || die '订阅从 main 更新，请在 main 分支运行。'
@@ -55,8 +64,8 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 prepare() {
-  local file=$1 content line
-  local -a lines
+  local file=$1 content line section='' last_section='' cr=''
+  local -a lines additions
   local -i i in_rules=0 after=0
   # 保留原文件末尾的换行状态。
   content=$(cat -- "$file" && print -rn -- .)
@@ -66,6 +75,7 @@ prepare() {
     case $line in
       '[Rule]') in_rules=1; after=$i; continue ;;
       \[*\]) (( in_rules )) && break; continue ;;
+      '## '*) section=$line; continue ;;
       ''|'#'*|';'*) continue ;;
     esac
     (( in_rules )) || continue
@@ -74,12 +84,14 @@ prepare() {
     [[ $line != "$selector,"* ]] || die "$file 已有不同设置：$line"
     [[ $line != (FINAL|MATCH),* ]] || break
     after=$i
+    last_section=$section
   done
   (( after )) || die "$file 缺少 [Rule] 段。"
 
-  local new_line=$rule
-  [[ ${lines[after]} == *$'\r' ]] && new_line+=$'\r'
-  lines[after,after]=("${lines[after]}" "$new_line")
+  [[ ${lines[after]} == *$'\r' ]] && cr=$'\r'
+  # 继续追加以保持规则优先级，同时避免把新规则挂在上一个服务名下。
+  [[ $last_section == "$heading" ]] || additions+=("$cr" "$heading$cr")
+  lines[after,after]=("${lines[after]}" "${additions[@]}" "$rule$cr")
   cp -p -- "$file" "$stage/$file.orig"
   cp -p -- "$file" "$stage/$file"
   print -rn -- "${(F)lines}" > "$stage/$file"
