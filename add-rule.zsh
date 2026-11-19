@@ -23,9 +23,22 @@ else
 fi
 selector="${rule%%,*},${${rule#*,}%%,*}"
 
-# 串行处理两个配置，避免同时运行脚本时覆盖另一条规则。
+configs=(sr_cnip_ex.conf sr_cnip_ad_ex.conf)
+[[ $(git branch --show-current) == main ]] || die '订阅从 main 更新，请在 main 分支运行。'
+
+# 锁住整个同步过程，包括拉取、修改、提交和推送。
 zmodload zsh/system
-zsystem flock -t 10 -f lock_fd "${0:A}" || die '另一份脚本正在更新配置，请稍后再试。'
+lock_file=$(git rev-parse --git-path add-rule.lock)
+: >> "$lock_file"
+zsystem flock -t 10 -f lock_fd "$lock_file" || die '另一份脚本正在更新配置，请稍后再试。'
+if ! git diff --quiet -- "${configs[@]}" || ! git diff --cached --quiet -- "${configs[@]}"; then
+  die '订阅配置有待提交的编辑，请先处理这些编辑，再运行脚本。'
+fi
+if git fetch --quiet --no-recurse-submodules origin main; then
+  git merge --quiet --ff-only FETCH_HEAD || die '无法快进同步 origin/main，请处理上面的 Git 提示后重试。'
+else
+  print -ru2 -- '未能读取远端，继续处理本地规则，随后会尝试推送。'
+fi
 stage=$(mktemp -d .add-rule.XXXXXXXX)
 typeset -a changed rollback
 cleanup() {
@@ -73,16 +86,20 @@ prepare() {
   changed+=("$file")
 }
 
-for file in sr_cnip_ex.conf sr_cnip_ad_ex.conf; do
+for file in "${configs[@]}"; do
   prepare "$file"
 done
 for file in "${changed[@]}"; do
   rollback+=("$file")
   mv -f -- "$stage/$file" "$file"
 done
-rollback=()
 if (( $#changed )); then
-  print -r -- "已写入 ${(j:、:)changed}：$rule"
+  git commit --only -m "添加分流规则 $rule" -- "${changed[@]}"
+  rollback=()
 else
   print -r -- "两份配置均已有此规则：$rule"
 fi
+
+# 上次推送失败时，重新输入同一条规则也能发布已有的本地提交。
+git push origin HEAD:refs/heads/main || die '推送失败，本地提交已保留。处理上面的 Git 错误后，重新输入同一条规则即可重试。'
+print -r -- "已同步到 origin/main，可以在 Mac 和 iPhone 刷新订阅。"
