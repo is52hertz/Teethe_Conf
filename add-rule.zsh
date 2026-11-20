@@ -92,12 +92,18 @@ prepare() {
   # 继续追加以保持规则优先级，同时避免把新规则挂在上一个服务名下。
   [[ $last_section == "$heading" ]] || additions+=("$cr" "$heading$cr")
   lines[after,after]=("${lines[after]}" "${additions[@]}" "$rule$cr")
+  if [[ ${lines[1]} == '# Shadowrocket:'* ]]; then
+    lines[1]="$timestamp_header$cr"
+  else
+    lines=("$timestamp_header$cr" "${lines[@]}")
+  fi
   cp -p -- "$file" "$stage/$file.orig"
   cp -p -- "$file" "$stage/$file"
   print -rn -- "${(F)lines}" > "$stage/$file"
   changed+=("$file")
 }
 
+timestamp_header=$(TZ=Asia/Singapore date '+# Shadowrocket: %Y-%m-%d %H:%M:%S')
 for file in "${configs[@]}"; do
   prepare "$file"
 done
